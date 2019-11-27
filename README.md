@@ -1,5 +1,10 @@
 # Craig, the Poet
 
+## Setup
+```bash
+pip install -r requirements.txt
+```
+
 ## Calling on Craig
 
 ```bash
