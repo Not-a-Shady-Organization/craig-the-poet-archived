@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
-
+from LogDecorator import LogDecorator
+import sys
 
 class Scraper():
     def __init__(self, url):
@@ -14,6 +15,7 @@ class Scraper():
 
 
     # TODO: Make more sophisticated. Handle cases where e.g. CL ad is titles YELP BOY TASTY
+    @LogDecorator()
     def classify(self, url):
         if 'craigslist' in url:
             return 'craigslist'
@@ -22,6 +24,7 @@ class Scraper():
             return 'yelp'
 
     # TODO: Add more scrapers for more sites
+    @LogDecorator()
     def craigslist_scrape(self):
         result_page = requests.get(self.url)
         result_soup = BeautifulSoup(result_page.text, 'html.parser')
@@ -38,3 +41,8 @@ class Scraper():
 
         self.title = result_title
         self.body = result_body
+
+
+if __name__ == '__main__':
+    s = Scraper(sys.argv[-1])
+    print(s.body)
