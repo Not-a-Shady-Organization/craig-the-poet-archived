@@ -1,15 +1,30 @@
 from bs4 import BeautifulSoup
+from google.cloud import speech_v1p1beta1
 import requests
 from google_tts import synthesize_text
 from google.cloud import language
 from google.cloud.language import enums
 from google.cloud.language import types
 from image_downloader import downloadimages
+import io
 import os
 from subprocess import check_output
 from shutil import copyfile
 from mutagen.mp3 import MP3
 import argparse
+from youtube_utils import video_to_flac
+
+
+def interval_of(word, transcription):
+    transcibed_words = [w for w in transcription.words]
+    if word.lower() not in [w.word.lower() for w in transcibed_words]:
+        return None
+
+    for w in transcibed_words:
+        if w.word.lower() == word.lower():
+            start_time = float(str(w.start_time.seconds) + '.' + str(w.start_time.nanos))
+            end_time = float(str(w.end_time.seconds) + '.' + str(w.end_time.nanos))
+            return (start_time, end_time)
 
 
 def change_audio_speed(audio_filepath, multiplier, output_filepath):
@@ -18,6 +33,35 @@ def change_audio_speed(audio_filepath, multiplier, output_filepath):
 
 
 POSTS_DIRECTORY = './posts'
+
+
+def transcribe(audio_filepath):
+    client = speech_v1p1beta1.SpeechClient()
+    enable_word_time_offsets = True
+    enable_word_confidence = True
+    language_code = "en-US"
+    config = {
+        "enable_word_confidence": enable_word_confidence,
+        "enable_word_time_offsets": enable_word_time_offsets,
+        "language_code": language_code,
+    }
+    with io.open(audio_filepath, "rb") as f:
+        content = f.read()
+    audio = {"content": content}
+
+    response = client.recognize(config, audio)
+
+    # TODO: We throw out alternatives and only use the first one.. they may be helpful
+    # The first result includes start and end time word offsets
+    try:
+        result = response.results[0]
+    except:
+        return None
+
+    # First alternative is the most probable result
+    alternative = result.alternatives[0]
+    return alternative
+
 
 
 def create_poetry(url=''):
@@ -129,17 +173,13 @@ def create_poetry(url=''):
         # Sort the entities by occurance in the source text
         by_occurance = sorted(entities, key=lambda e: post['body'].index(e.mentions[0].text.content))
 
-        # Split the entities into sections
-        sections = []
-        section_period = 3
+        word_to_image_filepath = dict()
         for i, entity in enumerate(by_occurance):
-            if i % section_period == 0:
-                sections.append([])
-            sections[i//section_period].append(entity)
+            downloadimages(entity.name, f'{post_subdirectory}/images', f'entity-{i+1}')
+            files = os.listdir(f'{post_subdirectory}/images/entity-{i+1}')
+            if files != []:
+                word_to_image_filepath[entity.name] = f'entity-{i+1}/{files[0]}'
 
-        for i, s in enumerate(sections):
-            most_salient = sorted(s, key=lambda e: e.salience, reverse=True)[0]
-            downloadimages(most_salient.name, f'{post_subdirectory}/images', f'entity-{i+1}')
 
         # Choose images
         images = []
@@ -162,12 +202,54 @@ def create_poetry(url=''):
 
 
         audio = MP3(f'{post_subdirectory}/audio/body-85-percent.mp3')
-        seconds_per_image = audio.info.length/len(images)
+        audio_length = audio.info.length
 
+        no_audio_output_filepath = f'{post_subdirectory}/video/no_audio_poem.mp4'
         output_filepath = f'{post_subdirectory}/video/poem.mp4'
         audio_filepath = f'{post_subdirectory}/audio/body.mp3'
-        create_video_command = f'ffmpeg -r {1/seconds_per_image} -s 1920x1080 -i {post_subdirectory}/images/frames/%01d.jpg -i {audio_filepath} -c:v libx264 -c:a aac -crf 23 -pix_fmt yuv420p -y {output_filepath}'
-        check_output(create_video_command, shell=True)
+        flac_audio_filepath = f'{post_subdirectory}/audio/body.flac'
+        concat_filepath = f'{post_subdirectory}/video/concat.txt'
+
+        video_to_flac(audio_filepath, flac_audio_filepath, 'a.txt')
+        transcription = transcribe(flac_audio_filepath)
+
+
+        word_start_times = [(entity.name, interval_of(entity.name, transcription)) for entity in by_occurance]
+        word_start_times = [(word, wst) for (word, wst) in word_start_times if (wst != None)]
+
+        image_intervals = []
+        for i, (name, wst) in enumerate(word_start_times):
+            if i == len(word_start_times)-1:
+                start = word_start_times[i][1][0]
+                end = audio_length
+                image_intervals += [(name, start, end)]
+                continue
+
+            if i == 0:
+                start = 0
+                end = word_start_times[i+1][1][0]
+                image_intervals += [(name, start, end)]
+            else:
+                start = word_start_times[i][1][0]
+                end = word_start_times[i+1][1][0]
+                image_intervals += [(name, start, end)]
+
+
+        # WRITE CONCAT FILE
+        with open(concat_filepath, 'w') as f:
+            f.write('ffconcat version 1.0\n')
+            for (word, start, end) in image_intervals:
+                f.write(f'file ../images/{word_to_image_filepath[word]}\n')
+                f.write(f'duration {end - start}\n')
+
+        no_audio_poem_command = f"ffmpeg -safe 0 -i {concat_filepath} -c:v libx264 -crf 23 -pix_fmt yuv420p {no_audio_output_filepath}"
+        check_output(no_audio_poem_command, shell=True)
+
+        # This command generates a video ffmpeg -i concat.txt -c:v libx264 -crf 23 -pix_fmt yuv420p out.mp4
+        # This command attaches audio to that video....
+        add_audio_command = f'ffmpeg -i {no_audio_output_filepath} -i {audio_filepath} -c:v libx264 -c:a aac -y  {output_filepath}'
+#        create_video_command = f'ffmpeg -r {} -s 1920x1080 -i {post_subdirectory}/images/frames/%01d.jpg -i {audio_filepath} -c:v libx264 -c:a aac -crf 23 -pix_fmt yuv420p -y {output_filepath}'
+        check_output(add_audio_command, shell=True)
 
         # TODO: Add proper start times based on when the word is said
 

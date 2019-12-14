@@ -12,7 +12,8 @@ def downloadimages(query, output_directory, image_directory):
         "image_directory": image_directory,
         "keywords": query,
         "format": "jpg",
-        "limit": 3,
+        "limit": 1,
+        # TODO: Drop exact sizing
         "exact_size": "1920,1080"
 #        "size": "medium"
 #        "silent_mode": True
