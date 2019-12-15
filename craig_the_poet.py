@@ -1,4 +1,15 @@
 
+'''
+-- TODO --
+Toss poems which contain few entities
+Toss poems which contain long held entities
+Try interpolation for None interval entities
+Add ability to insert image manually
+Add pauses
+
+'''
+
+
 # Setup for logging
 import logging
 
@@ -62,13 +73,7 @@ def create_poetry(title, body):
             f.write(str(entity))
 
     # TTS on both title and body
-    title_tts_audio = f'{post_subdirectory}/audio/title.mp3'
     body_tts_audio = f'{post_subdirectory}/audio/body.mp3'
-    synthesize_text(
-        title,
-        title_tts_audio,
-        name='en-IN-Wavenet-B'
-    )
     synthesize_text(
         body,
         body_tts_audio,
@@ -78,7 +83,6 @@ def create_poetry(title, body):
     )
 
     # Slow the TTS voice further
-    change_audio_speed(f'{post_subdirectory}/audio/title.mp3', .9, f'{post_subdirectory}/audio/title-90-percent.mp3')
     change_audio_speed(f'{post_subdirectory}/audio/body.mp3', .9, f'{post_subdirectory}/audio/body-90-percent.mp3')
 
     # Find audio length
