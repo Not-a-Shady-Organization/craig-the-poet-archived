@@ -64,8 +64,18 @@ def create_poetry(title, body):
     # TTS on both title and body
     title_tts_audio = f'{post_subdirectory}/audio/title.mp3'
     body_tts_audio = f'{post_subdirectory}/audio/body.mp3'
-    synthesize_text(title, title_tts_audio)
-    synthesize_text(body, body_tts_audio)
+    synthesize_text(
+        title,
+        title_tts_audio,
+        name='en-IN-Wavenet-B'
+    )
+    synthesize_text(
+        body,
+        body_tts_audio,
+        name='en-IN-Wavenet-B',
+        pitch=-1,
+        speaking_rate=0.8,
+    )
 
     # Slow the TTS voice further
     change_audio_speed(f'{post_subdirectory}/audio/title.mp3', .9, f'{post_subdirectory}/audio/title-90-percent.mp3')
@@ -83,30 +93,32 @@ def create_poetry(title, body):
     video_to_flac(audio_filepath, flac_audio_filepath)
     transcription = transcribe_audio(flac_audio_filepath)
 
-
     # TODO: Probably don't toss out words we can detect in speech.. Make estimates
-    word_intervals = dict()
+    entity_intervals = dict()
     for entity in entities:
         interval = interval_of(entity.name, transcription)
         if interval != None:
-            word_intervals[entity.name] = interval_of(entity.name, transcription)
+            entity_intervals[entity.name] = interval_of(entity.name, transcription)
 
-    word_information = dict()
-    for word, interval in word_intervals.items():
+    word_intervals = dict()
+    for word in body.split(' '):
+        interval = interval_of(word, transcription)
+        if interval != None:
+            word_intervals[word] = interval_of(word, transcription)
+
+    entity_information = dict()
+    for word, interval in entity_intervals.items():
         image_filepath = download_image(word, f'{post_subdirectory}/images', f'{word}')
 
-        word_information[word] = {
+        entity_information[word] = {
             'image_filepath': f'{image_filepath}',
             'interval': interval
         }
 
-    print(word_information)
-
     # Copy to frames directory to record selections for video
     makedir(f'{post_subdirectory}/images/frames')
-    for word, info in word_information.items():
+    for word, info in entity_information.items():
         copyfile(f'{post_subdirectory}/images/{info["image_filepath"]}', f'{post_subdirectory}/images/frames/{word}.jpg')
-
 
     no_audio_output_filepath = f'{post_subdirectory}/video/no_audio_poem.mp4'
     output_filepath = f'{post_subdirectory}/video/poem.mp4'
@@ -114,20 +126,18 @@ def create_poetry(title, body):
 
     # Create no audio slideshow
     image_intervals = []
-    word_information_list = sorted(list(word_information.items()), key=lambda x: body.index(' ' + x[0]))
-    for name, info in word_information_list:
-        print(name, body.index(' ' + name))
-    print(body)
-    print(word_information_list)
 
-    for i, (name, info) in enumerate(word_information_list):
+    # Sort entities by occurance in the source text
+    entity_information_list = sorted(list(entity_information.items()), key=lambda x: body.index(' ' + x[0]))
+
+    for i, (name, info) in enumerate(entity_information_list):
         if i == 0:
             start = 0
         else:
-            start = word_information_list[i][1]['interval'][0]
+            start = entity_information_list[i][1]['interval'][0]
 
-        if i != len(word_information)-1:
-            end = word_information_list[i+1][1]['interval'][0]
+        if i != len(entity_information)-1:
+            end = entity_information_list[i+1][1]['interval'][0]
         else:
             end = audio_length
         image_intervals += [(name, start, end)]
@@ -140,7 +150,7 @@ def create_poetry(title, body):
     with open(concat_filepath, 'w') as f:
         f.write('ffconcat version 1.0\n')
         for (word, start, end) in image_intervals:
-            f.write(f'file ../images/{word_information[word]["image_filepath"]}\n')
+            f.write(f'file ../images/{entity_information[word]["image_filepath"]}\n')
             f.write(f'duration {end - start}\n')
 
     create_slideshow(concat_filepath, no_audio_output_filepath)
