@@ -4,6 +4,12 @@
 ```bash
 pip install -r requirements.txt
 ```
+We also rely on `not-a-shady-organization/not-shady-utils`. Clone that repo and add it to your `PYTHONPATH` environment variable as
+
+```bash
+export PYTHONPATH=$PYTHONPATH:../not-shady-utils
+
+```
 
 ## Calling on Craig
 
