@@ -13,6 +13,7 @@ Add pauses
 # Setup for logging
 import logging
 
+from subprocess import check_output
 import argparse
 import os
 from shutil import copyfile
@@ -104,12 +105,6 @@ def create_poetry(title, body):
         if interval != None:
             entity_intervals[entity.name] = interval_of(entity.name, transcription)
 
-    word_intervals = dict()
-    for word in body.split(' '):
-        interval = interval_of(word, transcription)
-        if interval != None:
-            word_intervals[word] = interval_of(word, transcription)
-
     entity_information = dict()
     for word, interval in entity_intervals.items():
         image_filepath = download_image(word, f'{post_subdirectory}/images', f'{word}')
@@ -128,12 +123,11 @@ def create_poetry(title, body):
     output_filepath = f'{post_subdirectory}/video/poem.mp4'
     concat_filepath = f'{post_subdirectory}/video/concat.txt'
 
-    # Create no audio slideshow
-    image_intervals = []
-
     # Sort entities by occurance in the source text
     entity_information_list = sorted(list(entity_information.items()), key=lambda x: body.index(' ' + x[0]))
 
+    # Create no audio slideshow
+    image_intervals = []
     for i, (name, info) in enumerate(entity_information_list):
         if i == 0:
             start = 0
@@ -146,21 +140,50 @@ def create_poetry(title, body):
             end = audio_length
         image_intervals += [(name, start, end)]
 
+
     if image_intervals == []:
         raise NoEntitiesInTTS('No entities were successfully found in the TTS audio.')
 
+    image_information = []
+    for (word, start, end) in image_intervals:
+        image_information.append((word, start, end, f'../images/{entity_information[word]["image_filepath"]}'))
 
-    # WRITE CONCAT FILE
+    video_approved = False
+    while not video_approved:
+        # Create slideshow
+        write_concat_file(concat_filepath, image_information)
+        create_slideshow(concat_filepath, no_audio_output_filepath)
+
+        # Add audio to slideshow
+        add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
+
+        # Watch video
+        check_output(f'open {output_filepath}'.split())
+
+        answer = input('You like? ').lower()[0]
+        if answer == 'y':
+            video_approved = True
+            continue
+
+        print(f'In order, entities were... {[x[0] for x in image_intervals]}')
+        entity_to_replace = input('Which entity\'s image should be replaced? ').lower()
+        url = input('URL of replacing image: ')
+
+        new_image_information = []
+        for word, start, end, filepath in image_information:
+            if word == entity_to_replace:
+                new_image_information.append((word, start, end, url))
+            else:
+                new_image_information.append((word, start, end, filepath))
+        image_information = new_image_information
+
+
+def write_concat_file(concat_filepath, image_information):
     with open(concat_filepath, 'w') as f:
         f.write('ffconcat version 1.0\n')
-        for (word, start, end) in image_intervals:
-            f.write(f'file ../images/{entity_information[word]["image_filepath"]}\n')
+        for (word, start, end, filepath) in image_information:
+            f.write(f'file {filepath}\n')
             f.write(f'duration {end - start}\n')
-
-    create_slideshow(concat_filepath, no_audio_output_filepath)
-    add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
-
-
 
 
 
