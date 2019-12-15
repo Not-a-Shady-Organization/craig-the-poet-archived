@@ -1,10 +1,6 @@
 
 # Setup for logging
 import logging
-LOG_FILEPATH = 'log.txt'
-logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-import LogDecorator
 
 import argparse
 import os
@@ -23,13 +19,31 @@ POSTS_DIRECTORY = './posts'
 class DomainError(Exception):
     pass
 
+class NoEntitiesInTTS(Exception):
+    pass
 
+
+def next_log_file(directory):
+    files = os.listdir(directory)
+    if files:
+        greatest_num = max([int(filename.replace('log-', '').replace('.txt', '')) for filename in files])
+        return f'log-{greatest_num+1}.txt'
+    return f'log-{0}.txt'
 
 def create_poetry(title, body):
     # Make directories to store files for post
     clean_title = clean_word(title)
     post_subdirectory = f'{POSTS_DIRECTORY}/{clean_title}'
     makedir(post_subdirectory)
+
+    makedir(f'{post_subdirectory}/logs')
+    log_filename = next_log_file(f'{post_subdirectory}/logs')
+
+    # Setup for logging
+    LOG_FILEPATH = f'{post_subdirectory}/logs/{log_filename}'
+    logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
+    import LogDecorator
+
     makedir(f'{post_subdirectory}/audio')
     makedir(f'{post_subdirectory}/images')
     makedir(f'{post_subdirectory}/text')
@@ -75,7 +89,7 @@ def create_poetry(title, body):
     for entity in entities:
         interval = interval_of(entity.name, transcription)
         if interval != None:
-            word_intervals[entity.name] = interval
+            word_intervals[entity.name] = interval_of(entity.name, transcription)
 
     word_information = dict()
     for word, interval in word_intervals.items():
@@ -85,6 +99,8 @@ def create_poetry(title, body):
             'image_filepath': f'{image_filepath}',
             'interval': interval
         }
+
+    print(word_information)
 
     # Copy to frames directory to record selections for video
     makedir(f'{post_subdirectory}/images/frames')
@@ -98,7 +114,12 @@ def create_poetry(title, body):
 
     # Create no audio slideshow
     image_intervals = []
-    word_information_list = list(word_information.items())
+    word_information_list = sorted(list(word_information.items()), key=lambda x: body.index(' ' + x[0]))
+    for name, info in word_information_list:
+        print(name, body.index(' ' + name))
+    print(body)
+    print(word_information_list)
+
     for i, (name, info) in enumerate(word_information_list):
         if i == 0:
             start = 0
@@ -110,6 +131,10 @@ def create_poetry(title, body):
         else:
             end = audio_length
         image_intervals += [(name, start, end)]
+
+    if image_intervals == []:
+        raise NoEntitiesInTTS('No entities were successfully found in the TTS audio.')
+
 
     # WRITE CONCAT FILE
     with open(concat_filepath, 'w') as f:
