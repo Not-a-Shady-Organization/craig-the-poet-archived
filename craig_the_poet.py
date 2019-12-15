@@ -19,7 +19,7 @@ from shutil import copyfile
 
 from utils import makedir, clean_word
 from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image
-from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, video_to_flac
+from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac
 
 from Scraper import Scraper
 from mutagen.mp3 import MP3
@@ -94,7 +94,7 @@ def create_poetry(title, body):
     flac_audio_filepath = f'{post_subdirectory}/audio/body.flac'
 
     # Transcribe the audio to learn when words are said
-    video_to_flac(audio_filepath, flac_audio_filepath)
+    media_to_mono_flac(audio_filepath, flac_audio_filepath)
     transcription = transcribe_audio(flac_audio_filepath)
 
     # TODO: Probably don't toss out words we can detect in speech.. Make estimates
