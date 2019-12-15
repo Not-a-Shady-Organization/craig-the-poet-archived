@@ -18,9 +18,9 @@ import argparse
 import os
 from shutil import copyfile
 
-from utils import makedir, clean_word
+from utils import makedir, clean_word, download_image_from_url
 from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image
-from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac
+from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image
 
 from Scraper import Scraper
 from mutagen.mp3 import MP3
@@ -117,7 +117,8 @@ def create_poetry(title, body):
     # Copy to frames directory to record selections for video
     makedir(f'{post_subdirectory}/images/frames')
     for word, info in entity_information.items():
-        copyfile(f'{post_subdirectory}/images/{info["image_filepath"]}', f'{post_subdirectory}/images/frames/{word}.jpg')
+        resize_image(f'{post_subdirectory}/images/{info["image_filepath"]}', 1920, 1080, f'{post_subdirectory}/images/frames/{word}.jpg')
+#        copyfile(f'{post_subdirectory}/images/{info["image_filepath"]}', f'{post_subdirectory}/images/frames/{word}.jpg')
 
     no_audio_output_filepath = f'{post_subdirectory}/video/no_audio_poem.mp4'
     output_filepath = f'{post_subdirectory}/video/poem.mp4'
@@ -146,7 +147,7 @@ def create_poetry(title, body):
 
     image_information = []
     for (word, start, end) in image_intervals:
-        image_information.append((word, start, end, f'../images/{entity_information[word]["image_filepath"]}'))
+        image_information.append((word, start, end, f'../images/frames/{word}.jpg'))
 
     video_approved = False
     while not video_approved:
@@ -160,22 +161,59 @@ def create_poetry(title, body):
         # Watch video
         check_output(f'open {output_filepath}'.split())
 
-        answer = input('You like? ').lower()[0]
+        answer = input('Do you like the current slides? ').lower()
         if answer == 'y':
             video_approved = True
             continue
 
-        print(f'In order, entities were... {[x[0] for x in image_intervals]}')
-        entity_to_replace = input('Which entity\'s image should be replaced? ').lower()
+        entity_to_replace = ''
+        while entity_to_replace not in [x[0] for x in image_intervals]:
+            print(f'In order, entities were... {[x[0] for x in image_intervals]}')
+            entity_to_replace = input('Which entity\'s image should be replaced? ')
+
         url = input('URL of replacing image: ')
+        download_image_from_url(url, f'{post_subdirectory}/images/{entity_to_replace}/manually-added.jpg')
+        resize_image( f'{post_subdirectory}/images/{entity_to_replace}/manually-added.jpg', 1920, 1080,  f'{post_subdirectory}/images/frames/{entity_to_replace}.jpg')
+
+
+    answer = input('Do you want to add a slide? ').lower()[0]
+    video_approved = answer != 'y'
+    while not video_approved:
+        url = input('URL of replacing image: ')
+        makedir(f'{post_subdirectory}/images/manually-added')
+        download_image_from_url(url, f'{post_subdirectory}/images/manually-added/manually-added.jpg')
+        resize_image( f'{post_subdirectory}/images/manually-added/manually-added.jpg', 1920, 1080,  f'{post_subdirectory}/images/frames/manually-added.jpg')
+
+        insert_start = float(input('Start time for new image: '))
+        insert_end = float(input('End time for new image: '))
 
         new_image_information = []
         for word, start, end, filepath in image_information:
-            if word == entity_to_replace:
-                new_image_information.append((word, start, end, url))
+            # If inserted image begins within this image's time
+            if insert_start > start and insert_start < end:
+                new_image_information.append((word, start, insert_start, filepath))
+                new_image_information.append(('manually-added', insert_start, insert_end, f'../images/frames/manually-added.jpg'))
+            # If inserted image ends within this image's time
+            elif insert_end > start and insert_end < end:
+                new_image_information.append((word, insert_end, end, filepath))
             else:
                 new_image_information.append((word, start, end, filepath))
         image_information = new_image_information
+
+        # Create slideshow
+        write_concat_file(concat_filepath, image_information)
+        create_slideshow(concat_filepath, no_audio_output_filepath)
+
+        # Add audio to slideshow
+        add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
+
+        # Watch video
+        check_output(f'open {output_filepath}'.split())
+
+        answer = input('Do you want to add a slide? ').lower()[0]
+        video_approved = answer != 'y'
+
+
 
 
 def write_concat_file(concat_filepath, image_information):
