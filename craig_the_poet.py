@@ -7,6 +7,10 @@ Try interpolation for None interval entities
 Add ability to insert image manually
 Add pauses
 
+
+Make videos of title and poem
+Attach audio at proper spot
+
 '''
 
 
@@ -18,9 +22,9 @@ import argparse
 import os
 from shutil import copyfile
 
-from utils import makedir, clean_word, download_image_from_url
+from utils import makedir, clean_word, download_image_from_url, text_to_image
 from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image
-from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image
+from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image, fade_in_fade_out
 
 from Scraper import Scraper
 from mutagen.mp3 import MP3
@@ -42,16 +46,16 @@ def next_log_file(directory):
         return f'log-{greatest_num+1}.txt'
     return f'log-{0}.txt'
 
+
 def create_poetry(title, body):
     # Make directories to store files for post
     clean_title = clean_word(title)
     post_subdirectory = f'{POSTS_DIRECTORY}/{clean_title}'
     makedir(post_subdirectory)
 
+    # Setup for logging
     makedir(f'{post_subdirectory}/logs')
     log_filename = next_log_file(f'{post_subdirectory}/logs')
-
-    # Setup for logging
     LOG_FILEPATH = f'{post_subdirectory}/logs/{log_filename}'
     logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
     import LogDecorator
@@ -73,7 +77,19 @@ def create_poetry(title, body):
         for entity in entities:
             f.write(str(entity))
 
+    text_to_image(title, f'{post_subdirectory}/images/title.jpg')
+    resize_image(f'{post_subdirectory}/images/title.jpg', 1920, 1080, f'{post_subdirectory}/images/title-full-size.jpg')
+
     # TTS on both title and body
+    title_tts_audio = f'{post_subdirectory}/audio/title.mp3'
+    synthesize_text(
+        title,
+        title_tts_audio,
+        name='en-IN-Wavenet-B',
+        pitch=-1,
+        speaking_rate=0.7,
+    )
+
     body_tts_audio = f'{post_subdirectory}/audio/body.mp3'
     synthesize_text(
         body,
@@ -84,9 +100,13 @@ def create_poetry(title, body):
     )
 
     # Slow the TTS voice further
+    change_audio_speed(f'{post_subdirectory}/audio/title.mp3', .9, f'{post_subdirectory}/audio/title-90-percent.mp3')
     change_audio_speed(f'{post_subdirectory}/audio/body.mp3', .9, f'{post_subdirectory}/audio/body-90-percent.mp3')
 
     # Find audio length
+    audio = MP3(f'{post_subdirectory}/audio/title-90-percent.mp3')
+    title_audio_length = audio.info.length
+
     audio = MP3(f'{post_subdirectory}/audio/body-90-percent.mp3')
     audio_length = audio.info.length
 
@@ -114,14 +134,13 @@ def create_poetry(title, body):
             'interval': interval
         }
 
-    # Copy to frames directory to record selections for video
+    # Resize and copy to frames directory to record selections for video
     makedir(f'{post_subdirectory}/images/frames')
     for word, info in entity_information.items():
         resize_image(f'{post_subdirectory}/images/{info["image_filepath"]}', 1920, 1080, f'{post_subdirectory}/images/frames/{word}.jpg')
-#        copyfile(f'{post_subdirectory}/images/{info["image_filepath"]}', f'{post_subdirectory}/images/frames/{word}.jpg')
 
     no_audio_output_filepath = f'{post_subdirectory}/video/no_audio_poem.mp4'
-    output_filepath = f'{post_subdirectory}/video/poem.mp4'
+    output_filepath = f'{post_subdirectory}/video/poem_with_audio.mp4'
     concat_filepath = f'{post_subdirectory}/video/concat.txt'
 
     # Sort entities by occurance in the source text
@@ -213,15 +232,35 @@ def create_poetry(title, body):
         answer = input('Do you want to add a slide? ').lower()[0]
         video_approved = answer != 'y'
 
+    fade_in_fade_out(output_filepath, .4, f'{post_subdirectory}/video/poem-body-fades.mp4')
+
+    # Create title slideshow
+    title_concat_filepath = f'{post_subdirectory}/video/concat_title.txt'
+    no_audio_output_title_filepath = f'{post_subdirectory}/video/no_audio_title.mp4'
+    title_with_audio_filepath = f'{post_subdirectory}/video/title_with_audio.mp4'
+    title_output_filepath = f'{post_subdirectory}/video/title.mp4'
+    title_image_information = [('title', 0, title_audio_length + 1.5, f'../images/title-full-size.jpg')]
+    write_concat_file(title_concat_filepath, title_image_information)
+    create_slideshow(title_concat_filepath, no_audio_output_title_filepath)
+    add_audio_to_video(no_audio_output_title_filepath, f'{post_subdirectory}/audio/title-90-percent.mp3', title_with_audio_filepath)
+    fade_in_fade_out(title_with_audio_filepath, 0.4, title_output_filepath)
+
 
 
 
 def write_concat_file(concat_filepath, image_information):
     with open(concat_filepath, 'w') as f:
         f.write('ffconcat version 1.0\n')
+
+
         for (word, start, end, filepath) in image_information:
             f.write(f'file {filepath}\n')
             f.write(f'duration {end - start}\n')
+
+        # Concat files are a little broken in FFMPEG ... https://stackoverflow.com/questions/46952350/ffmpeg-concat-demuxer-with-duration-filter-issue
+        f.write(f'file {filepath}\n')
+
+
 
 
 
