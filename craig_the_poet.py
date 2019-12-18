@@ -18,8 +18,8 @@ import argparse
 import os
 from shutil import copyfile
 
-from utils import makedir, clean_word, download_image_from_url
-from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image
+from utils import makedir, clean_word, download_image_from_url, LogDecorator
+from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image, list_blobs
 from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image
 
 from Scraper import Scraper
@@ -34,13 +34,22 @@ class DomainError(Exception):
 class NoEntitiesInTTS(Exception):
     pass
 
-
+'''
 def next_log_file(directory):
     files = os.listdir(directory)
     if files:
         greatest_num = max([int(filename.replace('log-', '').replace('.txt', '')) for filename in files])
         return f'log-{greatest_num+1}.txt'
     return f'log-{0}.txt'
+'''
+
+def next_log_file(log_directory):
+    files = os.listdir(log_directory)
+    if files:
+        greatest_num = max([int(filename.replace('log-', '').replace('.txt', '')) for filename in files])
+        return f'log-{greatest_num+1}.txt'
+    return 'log-0.txt'
+
 
 def create_poetry(title, body):
     # Make directories to store files for post
@@ -48,13 +57,6 @@ def create_poetry(title, body):
     post_subdirectory = f'{POSTS_DIRECTORY}/{clean_title}'
     makedir(post_subdirectory)
 
-    makedir(f'{post_subdirectory}/logs')
-    log_filename = next_log_file(f'{post_subdirectory}/logs')
-
-    # Setup for logging
-    LOG_FILEPATH = f'{post_subdirectory}/logs/{log_filename}'
-    logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
-    import LogDecorator
 
     makedir(f'{post_subdirectory}/audio')
     makedir(f'{post_subdirectory}/images')
@@ -149,73 +151,14 @@ def create_poetry(title, body):
     for (word, start, end) in image_intervals:
         image_information.append((word, start, end, f'../images/frames/{word}.jpg'))
 
-    video_approved = False
-    while not video_approved:
-        # Create slideshow
-        write_concat_file(concat_filepath, image_information)
-        create_slideshow(concat_filepath, no_audio_output_filepath)
+    # Create slideshow
+    write_concat_file(concat_filepath, image_information)
+    create_slideshow(concat_filepath, no_audio_output_filepath)
 
-        # Add audio to slideshow
-        add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
+    # Add audio to slideshow
+    add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
 
-        # Watch video
-        check_output(f'open {output_filepath}'.split())
-
-        answer = input('Do you like the current slides? ').lower()
-        if answer == 'y':
-            video_approved = True
-            continue
-
-        entity_to_replace = ''
-        while entity_to_replace not in [x[0] for x in image_intervals]:
-            print(f'In order, entities were... {[x[0] for x in image_intervals]}')
-            entity_to_replace = input('Which entity\'s image should be replaced? ')
-
-        url = input('URL of replacing image: ')
-        download_image_from_url(url, f'{post_subdirectory}/images/{entity_to_replace}/manually-added.jpg')
-        resize_image( f'{post_subdirectory}/images/{entity_to_replace}/manually-added.jpg', 1920, 1080,  f'{post_subdirectory}/images/frames/{entity_to_replace}.jpg')
-
-
-    answer = input('Do you want to add a slide? ').lower()[0]
-    video_approved = answer != 'y'
-    while not video_approved:
-        url = input('URL of replacing image: ')
-        makedir(f'{post_subdirectory}/images/manually-added')
-        download_image_from_url(url, f'{post_subdirectory}/images/manually-added/manually-added.jpg')
-        resize_image( f'{post_subdirectory}/images/manually-added/manually-added.jpg', 1920, 1080,  f'{post_subdirectory}/images/frames/manually-added.jpg')
-
-        insert_start = float(input('Start time for new image: '))
-        insert_end = float(input('End time for new image: '))
-
-        new_image_information = []
-        for word, start, end, filepath in image_information:
-            # If inserted image begins within this image's time
-            if insert_start > start and insert_start < end:
-                new_image_information.append((word, start, insert_start, filepath))
-                new_image_information.append(('manually-added', insert_start, insert_end, f'../images/frames/manually-added.jpg'))
-            # If inserted image ends within this image's time
-            elif insert_end > start and insert_end < end:
-                new_image_information.append((word, insert_end, end, filepath))
-            else:
-                new_image_information.append((word, start, end, filepath))
-        image_information = new_image_information
-
-        # Create slideshow
-        write_concat_file(concat_filepath, image_information)
-        create_slideshow(concat_filepath, no_audio_output_filepath)
-
-        # Add audio to slideshow
-        add_audio_to_video(no_audio_output_filepath, audio_filepath, output_filepath)
-
-        # Watch video
-        check_output(f'open {output_filepath}'.split())
-
-        answer = input('Do you want to add a slide? ').lower()[0]
-        video_approved = answer != 'y'
-
-
-
-
+@LogDecorator()
 def write_concat_file(concat_filepath, image_information):
     with open(concat_filepath, 'w') as f:
         f.write('ffconcat version 1.0\n')
@@ -224,11 +167,49 @@ def write_concat_file(concat_filepath, image_information):
             f.write(f'duration {end - start}\n')
 
 
+@LogDecorator()
+def get_craigslist_ad(city, min_word_count=20):
+    # Retreive and filter blobs
+    blobs = list_blobs('craig-the-poet')
+    fresh_city_blobs = [blob for blob in blobs if f'craigslist/{city}' in blob.name and blob.metadata['used'] == 'false']
+
+    for blob in fresh_city_blobs:
+        text = blob.download_as_string().decode("utf-8")
+        words = text.split()
+        if len(words) >= min_word_count:
+            splitted = text.split('\n')
+            title = splitted[0]
+            body = '\n'.join(splitted[1:])
+            return {'blob': blob, 'title': title, 'body': body}
+    return None
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('url')
+    parser.add_argument('city')
     args = parser.parse_args()
 
-    scraper = Scraper(args.url)
-    create_poetry(scraper.title, scraper.body)
+    # Setup for logging
+    makedir(f'logs')
+    log_filename = next_log_file(f'logs')
+    LOG_FILEPATH = f'logs/{log_filename}'
+    logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
+    import LogDecorator
+
+    city = args.city
+    logging.info(f'Starting program on subject city {city}')
+    obj = get_craigslist_ad(city)
+    if not obj:
+        logging.info(f'No ads left for {city}. Exiting...')
+        exit()
+
+    logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
+    create_poetry(obj['title'], obj['body'])
+
+    logging.info(f"Poem successfully created. Ad blob {obj['blob'].name} marked as used.")
+
+    # TODO: Assume poem was successful and mark ad as used
+    blob = obj['blob']
+    blob.metadata = {'used': 'true'}
+    blob.patch()
