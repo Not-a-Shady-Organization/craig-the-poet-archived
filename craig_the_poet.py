@@ -1,13 +1,20 @@
 
 '''
 -- TODO --
-Toss poems which contain few entities
-Toss poems which contain long held entities
+Add images to blank sections
 Try interpolation for None interval entities
 Add ability to insert image manually
 Add pauses
-
 Make voice options pass into TTS
+
+Toss poems which contain few entities
+Toss poems which contain long held entities
+
+Setup chron trigger on scraper
+Make bucket searchable by topics
+Fix encoding issues with Craig Bucket?
+
+Make poem worker…? 
 '''
 
 
