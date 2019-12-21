@@ -397,9 +397,9 @@ if __name__ == '__main__':
     else:
         logging.info(f'Starting program on specified ad: {args.url}')
         s = Scraper()
-        obj = s.scrape_craigslist_ad(args.url, args.bucket_dir)
+        obj = s.scrape_craigslist_ad(args.url)
         if not obj:
-            logging.info(f'Ad scrape was unsuccessful. Exiting...')
+            print(f'Ad scrape was unsuccessful. Exiting...')
             exit()
 
         logging.info(f"Ad retreived: \nTitle: {obj['title']} \nBody: {obj['body']}\n")
