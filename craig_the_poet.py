@@ -7,6 +7,7 @@ Try interpolation for None interval entities
 Add ability to insert image manually
 Add pauses
 
+Make voice options pass into TTS
 '''
 
 
@@ -254,7 +255,7 @@ def create_poetry(title, body):
         **ffmpeg_config
     )
 
-    print('Altered TTS audio added to slideshow')
+    print('Altered TTS audio added to body slideshow')
 
     # Text to image the title & resize
     text_to_image(title, file_map['title-frame.jpg'])
@@ -266,6 +267,9 @@ def create_poetry(title, body):
     title_information = [('title', 0, title_audio_length + 1, file_map['relative title-frame-full.jpg'])]
     write_concat_file(file_map['title-concat.txt'], title_information)
     create_slideshow(file_map['title-concat.txt'], file_map['title-slideshow.mp4'], )
+
+    print('Title card slideshow created')
+
     add_audio_to_video(
         file_map['tts-title-rate-RATE.mp3'].replace('RATE', str(title_rate)),
         file_map['title-slideshow.mp4'],
@@ -273,7 +277,7 @@ def create_poetry(title, body):
         **ffmpeg_config
     )
 
-    print('Title card slideshow created')
+    print('Altered TTS audio added to title slideshow')
 
     fade_length = 0.3
     fade_in_fade_out(file_map['title-slideshow-with-audio.mp4'], fade_length, file_map['title-slideshow-with-audio-and-fades.mp4'])
@@ -312,25 +316,26 @@ def write_concat_file(concat_filepath, image_information):
 
 
 @LogDecorator()
-def get_craigslist_ad(city, min_word_count=20):
+def get_craigslist_ad(bucket_dir, min_word_count=20):
     # Retreive and filter blobs
     blobs = list_blobs('craig-the-poet')
-    fresh_city_blobs = [blob for blob in blobs if f'craigslist/{city}' in blob.name and blob.metadata['used'] == 'false']
 
-    for blob in fresh_city_blobs:
-        text = blob.download_as_string().decode("utf-8")
-        words = text.split()
-        if len(words) >= min_word_count:
+    for blob in blobs:
+        # Check if compliant with filters
+        if f'craigslist/{bucket_dir}' in blob.name and blob.metadata['used'] == 'false' and int(blob.metadata['word_count']) > min_word_count:
+            text = blob.download_as_string().decode("utf-8")
             splitted = text.split('\n')
-            title = splitted[0]
-            body = '\n'.join(splitted[1:])
-            return {'blob': blob, 'title': title, 'body': body}
-    return None
+
+            return {
+                'blob': blob,
+                'title': splitted[0],
+                'body': '\n'.join(splitted[1:])
+            }
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--city')
+    parser.add_argument('--bucket-dir')
     parser.add_argument('--url')
 
     parser.add_argument('--preserve', help="Don't delete ad from bucket after poem generates", action='store_true')
@@ -345,8 +350,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if not args.city and not args.url:
-        print('Must specify either --city or --url. Exiting...')
+    if not args.bucket_dir and not args.url:
+        print('Must specify either --bucket-dir or --url. Exiting...')
         exit()
 
     tts_params = {
@@ -365,19 +370,18 @@ if __name__ == '__main__':
 
 
     # Get a subject ad
-    if args.city:
-        logging.info(f'Starting program on subject city {args.city}')
-        obj = get_craigslist_ad(args.city, args.min_word_count)
+    if args.bucket_dir:
+        logging.info(f'Starting program on bucket directory {args.bucket_dir}')
+        obj = get_craigslist_ad(args.bucket_dir, args.min_word_count)
         if not obj:
-            logging.info(f'No ads left for {city}. Exiting...')
+            logging.info(f'No ads left in bucket directory {args.bucket_dir}. Exiting...')
             exit()
 
-        logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
+        logging.info(f"Ad retreived: \nTitle: {obj['title']} \nBody: {obj['body']}\n")
         create_poetry(obj['title'], obj['body'])
-
         logging.info(f"Poem successfully created. Ad blob {obj['blob'].name} marked as used.")
 
-        # TODO: Assume poem was successful and mark ad as used
+        # TODO: Is it true that the poem is created always?
         blob = obj['blob']
         blob.metadata = {'used': 'true'}
         blob.patch()
@@ -386,7 +390,7 @@ if __name__ == '__main__':
     else:
         logging.info(f'Starting program on specified ad: {args.url}')
         s = Scraper()
-        obj = s.scrape_craigslist_ad(args.url)
+        obj = s.scrape_craigslist_ad(args.url, args.bucket_dir)
         if not obj:
             logging.info(f'Ad scrape was unsuccessful. Exiting...')
             exit()
