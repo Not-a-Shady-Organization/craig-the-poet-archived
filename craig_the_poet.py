@@ -343,6 +343,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--bucket-dir')
     parser.add_argument('--url')
+    parser.add_argument('--local-file')
 
     parser.add_argument('--preserve', help="Don't delete ad from bucket after poem generates", action='store_true')
     parser.add_argument('--min-word-count', type=int, default=30, help="Minimum word count allowed for selected ad")
@@ -356,8 +357,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if not args.bucket_dir and not args.url:
-        print('Must specify either --bucket-dir or --url. Exiting...')
+    if not args.bucket_dir and not args.url and not args.local_file:
+        print('Must specify either --bucket-dir or --url or --local-file. Exiting...')
         exit()
 
     tts_params = {
@@ -393,8 +394,7 @@ if __name__ == '__main__':
             blob.metadata = {'used': 'true'}
             blob.patch()
 
-
-    else:
+    elif args.url:
         logging.info(f'Starting program on specified ad: {args.url}')
         s = Scraper()
         obj = s.scrape_craigslist_ad(args.url)
@@ -403,5 +403,17 @@ if __name__ == '__main__':
             exit()
 
         logging.info(f"Ad retreived: \nTitle: {obj['title']} \nBody: {obj['body']}\n")
+        create_poetry(obj['title'], obj['body'])
+        logging.info(f"Poem successfully created.")
+
+    elif args.local_file:
+        logging.info(f'Starting program on specified ad: {args.local_file}')
+
+        obj = {}
+        with open(args.local_file, 'r') as f:
+            lines = f.readlines()
+            obj['title'] = lines[0]
+            obj['body'] = '\n'.join(lines[1:])
+
         create_poetry(obj['title'], obj['body'])
         logging.info(f"Poem successfully created.")
