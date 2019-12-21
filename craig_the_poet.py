@@ -12,8 +12,10 @@ Add pauses
 
 # Setup for logging
 import logging
+from contextlib import redirect_stdout
 
 from subprocess import check_output
+import io
 import argparse
 import os
 from shutil import copyfile
@@ -199,7 +201,6 @@ def create_poetry(title, body):
         else:
             end = body_audio_length
         image_intervals += [(name, start, end)]
-
 
     if image_intervals == []:
         raise NoEntitiesInTTS('No entities were successfully found in the TTS audio.')
