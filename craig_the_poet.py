@@ -3,18 +3,17 @@
 -- TODO --
 Add images to blank sections
 Try interpolation for None interval entities
-Add ability to insert image manually
-Add pauses
-Make voice options pass into TTS
-
 Toss poems which contain few entities
 Toss poems which contain long held entities
 
-Setup chron trigger on scraper
+Add ability to insert image manually
+Add pauses
+Make voice options pass into TTS
 Make bucket searchable by topics
 Fix encoding issues with Craig Bucket?
 
-Make poem worker…? 
+Setup chron trigger on scraper
+Make poem worker…?
 '''
 
 
@@ -386,12 +385,13 @@ if __name__ == '__main__':
 
         logging.info(f"Ad retreived: \nTitle: {obj['title']} \nBody: {obj['body']}\n")
         create_poetry(obj['title'], obj['body'])
-        logging.info(f"Poem successfully created. Ad blob {obj['blob'].name} marked as used.")
+        logging.info(f"Poem successfully created.")
 
         # TODO: Is it true that the poem is created always?
-        blob = obj['blob']
-        blob.metadata = {'used': 'true'}
-        blob.patch()
+        if not args.preserve:
+            blob = obj['blob']
+            blob.metadata = {'used': 'true'}
+            blob.patch()
 
 
     else:
@@ -402,6 +402,6 @@ if __name__ == '__main__':
             logging.info(f'Ad scrape was unsuccessful. Exiting...')
             exit()
 
-        logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
+        logging.info(f"Ad retreived: \nTitle: {obj['title']} \nBody: {obj['body']}\n")
         create_poetry(obj['title'], obj['body'])
         logging.info(f"Poem successfully created.")
