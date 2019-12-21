@@ -22,7 +22,7 @@ from shutil import copyfile
 
 from utils import makedir, clean_word, download_image_from_url, LogDecorator, text_to_image
 from google_utils import find_entities, synthesize_text, transcribe_audio, interval_of, download_image, list_blobs
-from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image, fade_in_fade_out
+from ffmpeg_utils import create_slideshow, add_audio_to_video, change_audio_speed, media_to_mono_flac, resize_image, fade_in_fade_out, concat_videos, resize_video
 
 from Scraper import Scraper
 from mutagen.mp3 import MP3
@@ -65,6 +65,7 @@ def get_filenames(post_subdirectory):
         'body-slideshow.mp4': f'{post_subdirectory}/video/body-slideshow.mp4',
         'body-slideshow-with-audio.mp4': f'{post_subdirectory}/video/body-slideshow-with-audio.mp4',
         'body-slideshow-with-audio-and-fades.mp4': f'{post_subdirectory}/video/body-slideshow-with-audio-and-fades.mp4',
+        'body-slideshow-with-audio-and-fades-1920x1080.mp4': f'{post_subdirectory}/video/body-slideshow-with-audio-and-fades-1920x1080.mp4',
         'body-concat.txt': f'{post_subdirectory}/video/body-concat.txt',
 
         'title-frame.jpg': f'{post_subdirectory}/image/frame/title-frame.jpg',
@@ -74,6 +75,7 @@ def get_filenames(post_subdirectory):
         'title-slideshow.mp4': f'{post_subdirectory}/video/title-slideshow.mp4',
         'title-slideshow-with-audio.mp4': f'{post_subdirectory}/video/title-slideshow-with-audio.mp4',
         'title-slideshow-with-audio-and-fades.mp4': f'{post_subdirectory}/video/title-slideshow-with-audio-and-fades.mp4',
+        'title-slideshow-with-audio-and-fades-1920x1080.mp4': f'{post_subdirectory}/video/title-slideshow-with-audio-and-fades-1920x1080.mp4',
         'title-concat.txt': f'{post_subdirectory}/video/title-concat.txt',
 
         'poem-concat.txt': f'{post_subdirectory}/video/poem-concat.txt',
@@ -95,6 +97,10 @@ def create_file_structure(post_subdirectory):
 
 
 def create_poetry(title, body):
+    ffmpeg_config = {'loglevel': 'panic', 'safe': 0, 'hide_banner': None, 'y': None}
+
+    print(f'Creating poem on... \n\tTitle:{title}\n\tBody:{body}')
+
     # Make directories to store files for post
     clean_title = clean_word(title)
     post_subdirectory = f'{POSTS_DIRECTORY}/{clean_title}'
@@ -103,10 +109,14 @@ def create_poetry(title, body):
     create_file_structure(post_subdirectory)
     file_map = get_filenames(post_subdirectory)
 
+    print('File structure created')
+
     # Write the post's full text to file
     with open(file_map['post.txt'], 'w') as f:
         f.write(title + '\n')
         f.write(body)
+
+    print('Source text saved to file')
 
     # Find entities in body and write to file for records
     entities = find_entities(body)
@@ -114,6 +124,8 @@ def create_poetry(title, body):
         logging.info(f'Entities detected: {[e.name for e in entities]}')
         for entity in entities:
             f.write(str(entity))
+
+    print(f'Entities detected in text via Google: {", ".join([e.name for e in entities])}')
 
     # TTS on both title and body
     synthesize_text(
@@ -132,20 +144,26 @@ def create_poetry(title, body):
         speaking_rate=0.8,
     )
 
+    print('Text-to-speech audio created')
+
     # Slow the TTS voice further
     title_rate = 0.9
     change_audio_speed(
         file_map['tts-title.mp3'],
         title_rate,
-        file_map['tts-title-rate-RATE.mp3'].replace('RATE', str(title_rate))
+        file_map['tts-title-rate-RATE.mp3'].replace('RATE', str(title_rate)),
+        **ffmpeg_config
     )
 
     body_rate = 0.9
     change_audio_speed(
         file_map['tts-body.mp3'],
         body_rate,
-        file_map['tts-body-rate-RATE.mp3'].replace('RATE', str(body_rate))
+        file_map['tts-body-rate-RATE.mp3'].replace('RATE', str(body_rate)),
+        **ffmpeg_config
     )
+
+    print(f'TTS audio speed altered')
 
     # Find audio length
     title_audio = MP3(file_map['tts-title-rate-RATE.mp3'].replace('RATE', str(title_rate)))
@@ -157,8 +175,11 @@ def create_poetry(title, body):
     media_to_mono_flac(
         file_map['tts-body-rate-RATE.mp3'].replace('RATE', str(body_rate)),
         file_map['tts-body-rate-RATE.flac'].replace('RATE', str(body_rate)),
+        **ffmpeg_config
     )
     transcription = transcribe_audio(file_map['tts-body-rate-RATE.flac'].replace('RATE', str(body_rate)))
+
+    print('TTS transcribed via Google')
 
     # TODO: Probably don't toss out words we can detect in speech.. Make estimates
     entity_intervals = dict()
@@ -167,18 +188,28 @@ def create_poetry(title, body):
         if interval != None:
             entity_intervals[entity.name] = interval_of(entity.name, transcription)
 
-    entity_information = dict()
-    for word, interval in entity_intervals.items():
-        image_filepath = download_image(word, file_map['image_dir'], f'{word}')
+    print('Spoken time of entities found')
 
-        entity_information[word] = {
-            'image_filepath': f'{image_filepath}',
-            'interval': interval
-        }
+    entity_information = dict()
+
+    # Call to redirect_stdout catches output in variable f (Don't want it, I just don't like the output)
+    f = io.StringIO()
+    with redirect_stdout(f):
+        for word, interval in entity_intervals.items():
+            image_filepath = download_image(word, file_map['image_dir'], f'{word}')
+
+            entity_information[word] = {
+                'image_filepath': f'{image_filepath}',
+                'interval': interval
+            }
+
+    print('Images downloaded for transcribed entities')
 
     # Copy to frames directory to record selections for video
     for word, info in entity_information.items():
         resize_image(f'{file_map["image_dir"]}/{info["image_filepath"]}', 1920, 1080, f'{file_map["frame_dir"]}/{word}.jpg')
+
+    print('Images resized and copied to frames directory')
 
     # Sort entities by occurance in the source text
     def find_word(word, text):
@@ -213,36 +244,56 @@ def create_poetry(title, body):
     write_concat_file(file_map['body-concat.txt'], image_information)
     create_slideshow(file_map['body-concat.txt'], file_map['body-slideshow.mp4'])
 
+    print('Slideshow of frames created')
+
     # Add audio to slideshow
     add_audio_to_video(
-        file_map['body-slideshow.mp4'],
         file_map['tts-body-rate-RATE.mp3'].replace('RATE', str(body_rate)),
-        file_map['body-slideshow-with-audio.mp4']
+        file_map['body-slideshow.mp4'],
+        file_map['body-slideshow-with-audio.mp4'],
+        **ffmpeg_config
     )
+
+    print('Altered TTS audio added to slideshow')
 
     # Text to image the title & resize
     text_to_image(title, file_map['title-frame.jpg'])
     resize_image(file_map['title-frame.jpg'], 1920, 1080, file_map['title-frame-full.jpg'])
 
+    print('Title card created & resized')
+
     # Create title card slideshow
     title_information = [('title', 0, title_audio_length + 1, file_map['relative title-frame-full.jpg'])]
     write_concat_file(file_map['title-concat.txt'], title_information)
-    create_slideshow(file_map['title-concat.txt'], file_map['title-slideshow.mp4'])
+    create_slideshow(file_map['title-concat.txt'], file_map['title-slideshow.mp4'], )
     add_audio_to_video(
-        file_map['title-slideshow.mp4'],
         file_map['tts-title-rate-RATE.mp3'].replace('RATE', str(title_rate)),
-        file_map['title-slideshow-with-audio.mp4']
+        file_map['title-slideshow.mp4'],
+        file_map['title-slideshow-with-audio.mp4'],
+        **ffmpeg_config
     )
+
+    print('Title card slideshow created')
 
     fade_length = 0.3
     fade_in_fade_out(file_map['title-slideshow-with-audio.mp4'], fade_length, file_map['title-slideshow-with-audio-and-fades.mp4'])
     fade_in_fade_out(file_map['body-slideshow-with-audio.mp4'], fade_length, file_map['body-slideshow-with-audio-and-fades.mp4'])
 
-    with open(file_map['poem-concat.txt'], 'w') as f:
-        f.write(f"file 'title-slideshow-with-audio-and-fades.mp4'\n")
-        f.write(f"file 'body-slideshow-with-audio-and-fades.mp4'\n")
-    command = f"ffmpeg -y -safe 0 -f concat -i {file_map['poem-concat.txt']} -vcodec copy -acodec copy {file_map['poem.mp4']}"
-    check_output(command, shell=True)
+    print('Fade in and out added to body and title videos')
+
+    resize_video(file_map['title-slideshow-with-audio-and-fades.mp4'], file_map['title-slideshow-with-audio-and-fades-1920x1080.mp4'], **ffmpeg_config)
+    resize_video(file_map['body-slideshow-with-audio-and-fades.mp4'], file_map['body-slideshow-with-audio-and-fades-1920x1080.mp4'], **ffmpeg_config)
+
+    concat_videos([
+            file_map['title-slideshow-with-audio-and-fades-1920x1080.mp4'],
+            file_map['body-slideshow-with-audio-and-fades-1920x1080.mp4']
+        ],
+        file_map['poem.mp4'],
+        **ffmpeg_config
+    )
+
+    print('Videos concatenated')
+    print('Poem complete!')
 
 
 
@@ -277,11 +328,32 @@ def get_craigslist_ad(city, min_word_count=20):
     return None
 
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('city')
+    parser.add_argument('--city')
+    parser.add_argument('--url')
+
+    parser.add_argument('--preserve', help="Don't delete ad from bucket after poem generates", action='store_true')
+    parser.add_argument('--min-word-count', type=int, default=30, help="Minimum word count allowed for selected ad")
+
+    parser.add_argument('--voice', default='en-IN-Wavenet-C', help="TTS voice option")
+    parser.add_argument('--speaking_rate', type=float, default=.85, help="TTS speaking rate")
+    parser.add_argument('--pitch', type=float, default=-1., help="TTS pitch")
+
+    parser.add_argument('--title-speed-factor', type=float, default=.85, help="Speed multiplier for title audio")
+    parser.add_argument('--body-speed-factor', type=float, default=.9, help="Speed multiplier for body audio")
+
     args = parser.parse_args()
+
+    if not args.city and not args.url:
+        print('Must specify either --city or --url. Exiting...')
+        exit()
+
+    tts_params = {
+        'name': args.voice,
+        'speaking_rate': args.speaking_rate,
+        'pitch': args.pitch,
+    }
 
     # Setup for logging
     makedir(f'logs')
@@ -290,19 +362,35 @@ if __name__ == '__main__':
     logging.basicConfig(filename=LOG_FILEPATH, level=logging.DEBUG)
     import LogDecorator
 
-    city = args.city
-    logging.info(f'Starting program on subject city {city}')
-    obj = get_craigslist_ad(city)
-    if not obj:
-        logging.info(f'No ads left for {city}. Exiting...')
-        exit()
 
-    logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
-    create_poetry(obj['title'], obj['body'])
 
-    logging.info(f"Poem successfully created. Ad blob {obj['blob'].name} marked as used.")
+    # Get a subject ad
+    if args.city:
+        logging.info(f'Starting program on subject city {args.city}')
+        obj = get_craigslist_ad(args.city, args.min_word_count)
+        if not obj:
+            logging.info(f'No ads left for {city}. Exiting...')
+            exit()
 
-    # TODO: Assume poem was successful and mark ad as used
-    blob = obj['blob']
-    blob.metadata = {'used': 'true'}
-    blob.patch()
+        logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
+        create_poetry(obj['title'], obj['body'])
+
+        logging.info(f"Poem successfully created. Ad blob {obj['blob'].name} marked as used.")
+
+        # TODO: Assume poem was successful and mark ad as used
+        blob = obj['blob']
+        blob.metadata = {'used': 'true'}
+        blob.patch()
+
+
+    else:
+        logging.info(f'Starting program on specified ad: {args.url}')
+        s = Scraper()
+        obj = s.scrape_craigslist_ad(args.url)
+        if not obj:
+            logging.info(f'Ad scrape was unsuccessful. Exiting...')
+            exit()
+
+        logging.info(f"Ad retreived: \n\tTitle: {obj['title']} \n\tBody: {obj['body']}\n")
+        create_poetry(obj['title'], obj['body'])
+        logging.info(f"Poem successfully created.")
